@@ -1,0 +1,91 @@
+# RoboClaw Default Configuration
+# Values here can be overridden by environment-specific configs
+
+robot:
+  model: "h1_unitree"  # default embodiment
+  urdf_path: ""
+
+infrastructure:
+  postgres:
+    host: "localhost"
+    port: 5432
+    database: "roboclaw"
+    user: "roboclaw"
+    password: "roboclaw_dev"
+    pool_min_size: 5
+    pool_max_size: 20
+
+  redis:
+    host: "localhost"
+    port: 6379
+    db: 0
+    password: ""
+    socket_timeout: 5.0
+
+  milvus:
+    host: "localhost"
+    port: 19530
+    db_name: "roboclaw"
+    collections:
+      episode_embeddings:
+        name: "episode_embeddings"
+        dim: 1536
+        index_type: "IVF_FLAT"
+        metric_type: "COSINE"
+      skill_embeddings:
+        name: "skill_embeddings"
+        dim: 1536
+        index_type: "IVF_FLAT"
+        metric_type: "COSINE"
+      failure_patterns:
+        name: "failure_patterns"
+        dim: 1536
+        index_type: "IVF_FLAT"
+        metric_type: "COSINE"
+
+  rabbitmq:
+    host: "localhost"
+    port: 5672
+    user: "roboclaw"
+    password: "roboclaw_dev"
+    vhost: "/"
+    exchanges:
+      sensor_events: "roboclaw.sensors"
+      task_events: "roboclaw.tasks"
+      a2a_events: "roboclaw.a2a"
+
+llm:
+  provider: "anthropic"  # anthropic | openai
+  model: "claude-sonnet-4-6"
+  temperature: 0.1
+  max_tokens: 4096
+  planning:
+    model: "claude-sonnet-4-6"
+    temperature: 0.1
+    max_tokens: 8192
+
+agent:
+  loop_rate_hz: 50           # Main loop frequency
+  perception_rate_hz: 10     # Sensor processing frequency
+  planning_min_interval_s: 1.0  # Minimum time between re-plans
+  max_recovery_attempts: 3
+  default_timeout_s: 30.0
+  safety_check_rate_hz: 100
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins: ["*"]
+  rate_limit_per_minute: 60
+
+a2a:
+  enabled: true
+  discovery_interval_s: 30.0
+  task_timeout_s: 300.0
+
+logging:
+  level: "INFO"
+  format: "json"  # json | console
+  structlog_processors:
+    - "structlog.stdlib.add_log_level"
+    - "structlog.processors.TimeStamper(fmt='iso')"

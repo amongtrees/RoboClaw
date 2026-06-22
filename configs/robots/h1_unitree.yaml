@@ -1,0 +1,52 @@
+# Unitree H1 Humanoid Robot Configuration
+
+robot:
+  model: "h1_unitree"
+  display_name: "Unitree H1"
+  description: "Full-size humanoid robot with 2 arms, 2 legs, 5-finger hands"
+
+embodiment:
+  num_arms: 2
+  num_legs: 2
+  num_fingers_per_hand: 5
+  height_m: 1.80
+  mass_kg: 47.0
+
+  # Joint limits per group
+  joint_limits:
+    arm:
+      shoulder_pitch: [-2.0, 2.0]    # rad
+      shoulder_roll: [-1.5, 1.5]
+      shoulder_yaw: [-2.0, 2.0]
+      elbow: [-2.5, 0.0]
+      wrist_pitch: [-1.5, 1.5]
+      wrist_roll: [-1.5, 1.5]
+      wrist_yaw: [-2.0, 2.0]
+    leg:
+      hip_pitch: [-1.5, 0.5]
+      hip_roll: [-0.5, 0.5]
+      hip_yaw: [-1.0, 1.0]
+      knee: [0.0, 2.5]
+      ankle_pitch: [-1.0, 1.0]
+      ankle_roll: [-0.5, 0.5]
+
+  force_limits:
+    arm_joint_max_torque_nm: 80.0
+    leg_joint_max_torque_nm: 200.0
+    gripper_max_force_n: 15.0
+
+safety:
+  zmp_support_polygon:
+    - [-0.10, -0.05]  # left-front
+    - [-0.10, 0.05]   # right-front
+    - [0.05, 0.05]    # right-back
+    - [0.05, -0.05]   # left-back
+  max_joint_velocity_rad_s: 5.0
+  collision_force_threshold_n: 50.0
+  estop_deceleration: 2.0
+
+skills:
+  default_grasp_strategy: "top_down_encompassing"
+  walk_max_speed_ms: 1.5
+  walk_step_height_m: 0.05
+  arm_workspace_radius_m: 0.85

@@ -1,0 +1,48 @@
+# Agility Robotics Digit v3 Humanoid Robot Configuration
+
+robot:
+  model: "digit_v3"
+  display_name: "Agility Digit v3"
+  description: "Humanoid robot optimized for logistics, with 2 arms, 2 legs, 2-finger grippers"
+
+embodiment:
+  num_arms: 2
+  num_legs: 2
+  num_fingers_per_hand: 2
+  height_m: 1.75
+  mass_kg: 42.0
+
+  joint_limits:
+    arm:
+      shoulder_pitch: [-1.8, 1.8]
+      shoulder_roll: [-1.2, 1.2]
+      shoulder_yaw: [-1.8, 1.8]
+      elbow: [-2.2, 0.0]
+      wrist_pitch: [-1.5, 1.5]
+      wrist_roll: [-1.5, 1.5]
+    leg:
+      hip_pitch: [-1.2, 0.5]
+      hip_roll: [-0.4, 0.4]
+      knee: [0.0, 2.0]
+      ankle_pitch: [-0.8, 0.8]
+
+  force_limits:
+    arm_joint_max_torque_nm: 60.0
+    leg_joint_max_torque_nm: 150.0
+    gripper_max_force_n: 20.0
+
+safety:
+  zmp_support_polygon:
+    - [-0.08, -0.04]
+    - [-0.08, 0.04]
+    - [0.04, 0.04]
+    - [0.04, -0.04]
+  max_joint_velocity_rad_s: 4.0
+  collision_force_threshold_n: 40.0
+  estop_deceleration: 1.8
+
+skills:
+  default_grasp_strategy: "parallel_jaw_pinch"
+  walk_max_speed_ms: 1.2
+  walk_step_height_m: 0.04
+  arm_workspace_radius_m: 0.75
