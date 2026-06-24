@@ -71,4 +71,13 @@ class AgentGraphState(BaseModel):
     peer_agents: list[dict[str, Any]] = Field(default_factory=list)
     pending_delegations: list[dict[str, Any]] = Field(default_factory=list)
 
+    # Model routing (Phase 2 — VLN / VLA / World Model dispatch)
+    model_routing: dict[str, str] = Field(default_factory=dict)
+    # Maps sub_task_id -> ModelType value.  Populated by plan_node after
+    # the TaskDecomposer annotates each SubTask with a _model_type tag.
+
+    model_inference_results: dict[str, Any] = Field(default_factory=dict)
+    # Stores the latest ModelInferenceResponse (as a dict) keyed by
+    # sub_task_id.  Written by act_node after a model client returns.
+
     model_config = ConfigDict(arbitrary_types_allowed=True)

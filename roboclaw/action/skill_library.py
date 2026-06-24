@@ -160,10 +160,13 @@ class SkillLibrary:
         skill_type: str,
         parameters: dict[str, Any],
         world_state: dict[str, Any] | None = None,
+        model_result: Any = None,
     ) -> ActionResult:
         """Execute a skill by its type name.
 
         Dispatches to the registered executor for that skill type.
+        When ``model_result`` (a ``ModelInferenceResponse``) is provided
+        and successful, its outputs drive the action result directly.
         """
         definition = self._skills.get(skill_type)
         if definition is None:
@@ -171,6 +174,28 @@ class SkillLibrary:
                 sub_task_id=skill_type,
                 status=ActionResultStatus.FAILURE,
                 error={"type": "unknown_skill", "detail": f"Skill '{skill_type}' not found"},
+            )
+
+        # --- Model-driven execution ---
+        if model_result is not None and hasattr(model_result, "is_success") and model_result.is_success:
+            logger.info(
+                "Model-driven execution of skill '%s': confidence=%.2f, time=%.0fms",
+                skill_type, model_result.confidence, model_result.inference_time_ms,
+            )
+            return ActionResult(
+                sub_task_id=skill_type,
+                status=ActionResultStatus.SUCCESS,
+                duration_sec=model_result.inference_time_ms / 1000.0,
+                actual_outcome={
+                    "model_driven": True,
+                    "skill": skill_type,
+                    "params": parameters,
+                    "waypoints": model_result.waypoints,
+                    "joint_actions": model_result.joint_actions,
+                    "ee_poses": model_result.ee_poses,
+                    "gripper_command": model_result.gripper_command,
+                    "confidence": model_result.confidence,
+                },
             )
 
         executor = self._executors.get(skill_type)

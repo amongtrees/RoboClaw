@@ -1,0 +1,23 @@
+# VLN Model Configuration — Qwen-RobotNav (8B)
+#
+# This model handles all navigation / locomotion sub-tasks:
+#   navigate_to, walk_steps, climb_stairs
+#
+# Qwen-RobotNav is based on Qwen3-VL and achieves SOTA on:
+#   - VLN-CE RxR: 76.5% SR
+#   - HM3Dv2 ObjectNav: 75.6% SR (RGB only)
+#
+# The model server is started via:
+#   python -m roboclaw.serve.vln_server --config configs/models/vln_qwen_robotnav.yaml
+
+model:
+  type: "vln"
+  name: "Qwen-RobotNav-8B"
+  base_url: "http://localhost:8002"
+  api_path: "/v1/navigate"
+  timeout_sec: 60.0
+  max_retries: 2
+  api_key: ""
+  headers:
+    Content-Type: "application/json"
+  enabled: true

@@ -60,17 +60,35 @@ async def reflect_node(state: AgentGraphState) -> dict[str, Any]:
 
 
 async def plan_node(state: AgentGraphState) -> dict[str, Any]:
-    """Decompose high-level task into executable sub-tasks.
+    """Decompose high-level task into executable sub-tasks with model routing.
 
-    In production, this calls roboclaw.planning.TaskDecomposer with
-    context from ContextCompiler. For Phase 1, it creates a stub plan.
+    Calls TaskDecomposer.plan() which returns (ExecutionPlan, routing_map).
+    The routing_map annotates each sub-task with the ModelType that should
+    execute it (VLN / VLA / World Model / LLM / NONE).
+
+    When no decomposer is available, generates a stub plan with model tags.
     """
     logger.debug(f"[{state.robot_id}] PLAN phase")
 
     task_spec = state.task_spec or {}
     goal = task_spec.get("goal", "no goal specified")
 
-    # Stub plan — in production this is LLM-generated via TaskDecomposer
+    # --- Try TaskDecomposer first ---
+    try:
+        from roboclaw.planning.task_decomposer import TaskDecomposer
+        from roboclaw.planning.plan_validator import PlanValidator
+
+        decomposer = TaskDecomposer(validator=PlanValidator())
+        plan, routing_map = await decomposer.plan(task_spec, {}, None)
+        return {
+            "execution_plan": plan.model_dump(),
+            "model_routing": routing_map,
+            "phase": AgentPhase.PLANNING,
+        }
+    except Exception as exc:
+        logger.warning("TaskDecomposer not available, using stub plan: %s", exc)
+
+    # --- Stub plan with explicit model routing ---
     plan = {
         "plan_id": f"plan_{state.session_id}",
         "task_goal": goal,
@@ -78,7 +96,7 @@ async def plan_node(state: AgentGraphState) -> dict[str, Any]:
             {
                 "sub_task_id": "perceive_scene",
                 "skill_type": "gaze_at",
-                "parameters": {"target": "scene"},
+                "parameters": {"target": "scene", "_model_type": "llm"},
                 "preconditions": [],
                 "expected_outcome": {"objects_detected": True},
                 "timeout_sec": 5.0,
@@ -88,7 +106,7 @@ async def plan_node(state: AgentGraphState) -> dict[str, Any]:
             {
                 "sub_task_id": "navigate_to_target",
                 "skill_type": "navigate_to",
-                "parameters": {"room": "kitchen"},
+                "parameters": {"room": "kitchen", "_model_type": "vln"},
                 "preconditions": ["perceive_scene"],
                 "expected_outcome": {"at_location": "kitchen"},
                 "timeout_sec": 60.0,
@@ -98,7 +116,7 @@ async def plan_node(state: AgentGraphState) -> dict[str, Any]:
             {
                 "sub_task_id": "grasp_object",
                 "skill_type": "whole_body_grasp",
-                "parameters": {"object": "cup", "arm": "right"},
+                "parameters": {"object": "cup", "arm": "right", "_model_type": "vla"},
                 "preconditions": ["navigate_to_target"],
                 "expected_outcome": {"grasped": True},
                 "timeout_sec": 15.0,
@@ -109,17 +127,25 @@ async def plan_node(state: AgentGraphState) -> dict[str, Any]:
         "estimated_duration_sec": 80.0,
     }
 
+    routing_map = {
+        "perceive_scene": "llm",
+        "navigate_to_target": "vln",
+        "grasp_object": "vla",
+    }
+
     return {
         "execution_plan": plan,
+        "model_routing": routing_map,
         "phase": AgentPhase.PLANNING,
     }
 
 
 async def act_node(state: AgentGraphState) -> dict[str, Any]:
-    """Execute the next executable sub-task.
+    """Execute the next executable sub-task, routing to VLN/VLA/World Model.
 
-    In production, this calls roboclaw.action.SkillLibrary to dispatch
-    to the appropriate ActionExecutor (locomotion/manipulation/navigation).
+    Uses ModelRouter to dispatch the sub-task to the appropriate model
+    client.  When the model is unavailable, falls back to the in-process
+    simulated executor via SkillLibrary.
     """
     logger.debug(f"[{state.robot_id}] ACT phase")
 
@@ -136,7 +162,49 @@ async def act_node(state: AgentGraphState) -> dict[str, Any]:
             break
 
     if next_subtask:
-        logger.info(f"[{state.robot_id}] Executing sub-task: {next_subtask['sub_task_id']} ({next_subtask['skill_type']})")
+        sub_task_id = next_subtask["sub_task_id"]
+        skill_type = next_subtask.get("skill_type", "")
+        model_type = state.model_routing.get(sub_task_id, "llm")
+
+        logger.info(
+            f"[{state.robot_id}] Executing sub-task: {sub_task_id} "
+            f"({skill_type}) → model={model_type}"
+        )
+
+        # --- Try ModelRouter ---
+        try:
+            from roboclaw.clients.model_router import ModelRouter
+            from roboclaw.models.task import SubTask
+
+            router = _get_model_router()
+            if router is not None:
+                subtask = SubTask(**next_subtask)
+                inference = await router.route(
+                    subtask,
+                    perception=state.perception,
+                    world_state={
+                        "robot_pose": state.robot_pose,
+                        "world_objects": state.world_objects,
+                        "safety_status": state.safety_status,
+                        "task_goal": plan.get("task_goal", ""),
+                    },
+                    robot_state={
+                        "robot_id": state.robot_id,
+                        "joint_positions": {},
+                    },
+                )
+                model_results = dict(state.model_inference_results)
+                model_results[sub_task_id] = inference.model_dump()
+
+                return {
+                    "current_subtask": next_subtask,
+                    "model_inference_results": model_results,
+                    "phase": AgentPhase.ACTING,
+                }
+        except Exception as exc:
+            logger.warning("ModelRouter unavailable, using direct execution: %s", exc)
+
+        # --- Direct execution (no router available) ---
         return {
             "current_subtask": next_subtask,
             "phase": AgentPhase.ACTING,
@@ -147,6 +215,27 @@ async def act_node(state: AgentGraphState) -> dict[str, Any]:
         "current_subtask": None,
         "phase": AgentPhase.ACTING,
     }
+
+
+# --- Internal: thread-safe ModelRouter singleton access ---
+
+_model_router: Any = None
+
+
+def _get_model_router() -> Any:
+    """Return the module-level ModelRouter singleton (set at app startup)."""
+    return _model_router
+
+
+def set_model_router(router: Any) -> None:
+    """Set the module-level ModelRouter singleton.
+
+    Called from the FastAPI lifespan / application bootstrap so that
+    every node invocation can access the router without threading issues.
+    """
+    global _model_router
+    _model_router = router
+    logger.info("ModelRouter installed in orchestration nodes")
 
 
 async def feedback_node(state: AgentGraphState) -> dict[str, Any]:

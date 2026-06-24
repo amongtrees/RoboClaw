@@ -1,0 +1,25 @@
+# World Model Configuration — NVIDIA Cosmos Predict-2
+#
+# This model provides predictive physical simulation for:
+#   - Safety lookahead: "what happens if I execute this action?"
+#   - Planning feedback: "will this grasp succeed?"
+#   - Recovery planning: "what if I try a different approach?"
+#
+# Two deployment modes:
+#   1. Self-hosted: local FastAPI server wrapping Cosmos Predict-2 weights
+#   2. Proxy mode: forward requests to NVIDIA's hosted API at api.build.nvidia.com
+#
+# The model server is started via:
+#   python -m roboclaw.serve.world_model_server --config configs/models/world_model_cosmos.yaml
+
+model:
+  type: "world_model"
+  name: "NVIDIA-Cosmos-Predict-2"
+  base_url: "http://localhost:8004"
+  api_path: "/v1/predict"
+  timeout_sec: 45.0
+  max_retries: 2
+  api_key: "${NVIDIA_API_KEY}"
+  headers:
+    Content-Type: "application/json"
+  enabled: true

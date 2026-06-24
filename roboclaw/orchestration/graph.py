@@ -110,16 +110,24 @@ def build_agent_graph(checkpointer: Any = None) -> Any:
 async def create_agent_runner(
     robot_id: str,
     checkpointer: Any = None,
+    model_router: Any = None,
 ) -> Any:
     """Create a ready-to-run agent graph with default configuration.
 
     Args:
         robot_id: The robot's unique identifier.
         checkpointer: Optional checkpointer (uses in-memory if None).
+        model_router: Optional ModelRouter for VLN/VLA/World Model dispatch.
+                      When None, act_node falls back to simulated executors.
 
     Returns:
         Tuple of (compiled_graph, config_dict) ready for graph.ainvoke().
     """
+    # Install the ModelRouter so act_node can access it
+    if model_router is not None:
+        from roboclaw.orchestration.nodes import set_model_router
+        set_model_router(model_router)
+
     graph = build_agent_graph(checkpointer)
 
     config = {

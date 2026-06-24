@@ -20,11 +20,58 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan — startup and shutdown hooks."""
     logger.info("RoboClaw API starting up...")
-    # Initialize connections (Redis, DB, Milvus, RabbitMQ)
-    # These are lazily initialized on first request in Phase 1
+
+    # --- Bootstrap ModelRouter for VLN / VLA / World Model dispatch ---
+    settings = getattr(app.state, "settings", None)
+    if settings and getattr(settings, "models", None):
+        app.state.model_router = _create_model_router(settings)
+        from roboclaw.orchestration.nodes import set_model_router
+        set_model_router(app.state.model_router)
+        logger.info("ModelRouter installed with models: %s",
+                     list(app.state.model_router.registered_model_types))
+    else:
+        app.state.model_router = None
+        logger.info("No model clients configured — agent will use simulated executors")
+
     yield
+
+    # --- Shutdown ---
     logger.info("RoboClaw API shutting down...")
-    # Close connections
+    if app.state.model_router is not None:
+        await app.state.model_router.close()
+
+
+def _create_model_router(settings: Any) -> Any:
+    """Create a ModelRouter from the Settings.models configuration."""
+    from roboclaw.clients.model_router import ModelRouter
+    from roboclaw.clients.vla_client import VLAClient
+    from roboclaw.clients.vln_client import VLNClient
+    from roboclaw.clients.world_model_client import WorldModelClient
+    from roboclaw.core.types import ModelType
+
+    vln_client = None
+    vla_client = None
+    wm_client = None
+
+    for key, cfg in settings.models.items():
+        if not cfg.enabled:
+            continue
+        mt = cfg.model_type or key
+        if mt == ModelType.VLN:
+            vln_client = VLNClient(cfg)
+            logger.info("Created VLN client: %s → %s%s", cfg.model_name, cfg.base_url, cfg.api_path)
+        elif mt == ModelType.VLA:
+            vla_client = VLAClient(cfg)
+            logger.info("Created VLA client: %s → %s%s", cfg.model_name, cfg.base_url, cfg.api_path)
+        elif mt == ModelType.WORLD_MODEL:
+            wm_client = WorldModelClient(cfg)
+            logger.info("Created World Model client: %s → %s%s", cfg.model_name, cfg.base_url, cfg.api_path)
+
+    return ModelRouter(
+        vln_client=vln_client,
+        vla_client=vla_client,
+        world_model_client=wm_client,
+    )
 
 
 def create_app(settings: Any = None) -> FastAPI:

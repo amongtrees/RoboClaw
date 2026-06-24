@@ -78,3 +78,48 @@ class SafetySeverity(StrEnum):
     WARNING = "warning"
     CRITICAL = "critical"
     E_STOP = "e_stop"
+
+
+class ModelType(StrEnum):
+    """Which specialized foundation model handles a given subtask.
+
+    Maps to the Qwen-RobotSuite tripartite architecture:
+      - VLN (Vision-Language Navigation): handles navigation / locomotion
+      - VLA (Vision-Language-Action): handles manipulation / grasping
+      - WORLD_MODEL: predictive physical simulation for lookahead safety
+      - LLM: generic language reasoning (planning, reflection, HRI)
+      - NONE: pure rule-based or simulation stub (no model needed)
+    """
+
+    VLN = "vln"
+    VLA = "vla"
+    WORLD_MODEL = "world_model"
+    LLM = "llm"
+    NONE = "none"
+
+
+# Mapping from SkillType to the ModelType domain that should execute it.
+_SKILL_MODEL_MAP: dict[str, str] = {
+    # --- VLN domain: locomotion & navigation ---
+    SkillType.NAVIGATE_TO: "vln",
+    SkillType.WALK_STEPS: "vln",
+    SkillType.CLIMB_STAIRS: "vln",
+    # --- VLA domain: manipulation & grasping ---
+    SkillType.WHOLE_BODY_GRASP: "vla",
+    SkillType.BI_MANUAL_CARRY: "vla",
+    SkillType.PLACE_OBJECT: "vla",
+    SkillType.HANDOVER: "vla",
+    SkillType.OPEN_DOOR: "vla",
+    SkillType.PUSH_OBJECT: "vla",
+    SkillType.PULL_OBJECT: "vla",
+    SkillType.PRESS_BUTTON: "vla",
+    # --- LLM / rule-based ---
+    SkillType.SPEAK: "llm",
+    SkillType.GAZE_AT: "llm",
+    SkillType.WAIT_FOR: "llm",
+}
+
+
+def model_type_for_skill(skill_type: str) -> str:
+    """Return the ModelType value that should execute a given SkillType."""
+    return _SKILL_MODEL_MAP.get(skill_type, "llm")

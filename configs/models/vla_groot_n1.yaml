@@ -1,0 +1,26 @@
+# VLA Model Configuration — NVIDIA GR00T-N1-2B
+#
+# This model handles all manipulation / grasping sub-tasks:
+#   whole_body_grasp, place_object, handover, open_door,
+#   push_object, pull_object, press_button
+#
+# GR00T-N1 uses a dual-system architecture:
+#   - System 2 (VLM): slow reasoning about what to do
+#   - System 1 (DiT): fast action generation at ~16 Hz
+#
+# License: Apache 2.0 — specifically designed for humanoid robots.
+#
+# The model server is started via:
+#   python -m roboclaw.serve.vla_server --config configs/models/vla_groot_n1.yaml
+
+model:
+  type: "vla"
+  name: "GR00T-N1-2B"
+  base_url: "http://localhost:8003"
+  api_path: "/v1/act"
+  timeout_sec: 30.0
+  max_retries: 3
+  api_key: ""
+  headers:
+    Content-Type: "application/json"
+  enabled: true

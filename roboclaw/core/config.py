@@ -94,6 +94,25 @@ class A2AConfig(BaseModel):
     task_timeout_s: float = 300.0
 
 
+class ModelClientConfig(BaseModel):
+    """Configuration for a single remote model API client (VLN / VLA / World Model).
+
+    Each model runs as an independent FastAPI microservice that RoboClaw
+    calls via httpx.AsyncClient.  For hosted APIs (e.g. NVIDIA Cosmos)
+    set ``base_url`` to the provider URL and supply ``api_key``.
+    """
+
+    model_type: str = ""  # ModelType enum value
+    model_name: str = ""  # e.g. "Qwen-RobotNav-8B", "GR00T-N1-2B"
+    base_url: str = "http://localhost:8001"
+    api_path: str = "/v1/infer"
+    timeout_sec: float = 30.0
+    max_retries: int = 3
+    api_key: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = True
+
+
 class EmbodimentConfig(BaseModel):
     num_arms: int = 2
     num_legs: int = 2
@@ -155,6 +174,7 @@ class Settings(BaseSettings):
     agent: AgentSettings = Field(default_factory=AgentSettings)
     api: APIConfig = Field(default_factory=APIConfig)
     a2a: A2AConfig = Field(default_factory=A2AConfig)
+    models: dict[str, ModelClientConfig] = Field(default_factory=dict)
 
     @classmethod
     def from_yaml(cls, config_path: str | Path, robot_config_path: str | Path | None = None) -> "Settings":
@@ -205,6 +225,12 @@ class Settings(BaseSettings):
         if robot_config_path:
             robot_config = RobotConfig.from_yaml(robot_config_path)
 
+        # Parse model client configs
+        models: dict[str, ModelClientConfig] = {}
+        for key, model_raw in raw.get("models", {}).items():
+            if isinstance(model_raw, dict):
+                models[key] = ModelClientConfig(**model_raw)
+
         return cls(
             robot=robot_config,
             infrastructure={
@@ -217,6 +243,7 @@ class Settings(BaseSettings):
             agent=AgentSettings(**raw.get("agent", {})),
             api=APIConfig(**raw.get("api", {})),
             a2a=A2AConfig(**raw.get("a2a", {})),
+            models=models,
         )
 
     @property
