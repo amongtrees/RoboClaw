@@ -111,6 +111,9 @@ async def create_agent_runner(
     robot_id: str,
     checkpointer: Any = None,
     model_router: Any = None,
+    sim_module: Any = None,
+    ros2_module: Any = None,
+    llm: Any = None,
 ) -> Any:
     """Create a ready-to-run agent graph with default configuration.
 
@@ -118,15 +121,64 @@ async def create_agent_runner(
         robot_id: The robot's unique identifier.
         checkpointer: Optional checkpointer (uses in-memory if None).
         model_router: Optional ModelRouter for VLN/VLA/World Model dispatch.
-                      When None, act_node falls back to simulated executors.
+                      When None, a default ModelRouter is created with optional
+                      sim executor wiring.
+        sim_module: Optional SimModule.  When provided, MuJoCo physics executors
+                    are registered on the SkillLibrary used by the ModelRouter.
+        ros2_module: Optional ROS2Module.  When provided, ROS 2 executors are
+                     registered on the SkillLibrary.  ROS2Module takes priority
+                     over SimModule for the same skill types.
 
     Returns:
         Tuple of (compiled_graph, config_dict) ready for graph.ainvoke().
     """
-    # Install the ModelRouter so act_node can access it
-    if model_router is not None:
-        from roboclaw.orchestration.nodes import set_model_router
-        set_model_router(model_router)
+    # --- Create SkillLibrary and wire executors ---
+    from roboclaw.action.skill_library import SkillLibrary
+
+    skill_library = SkillLibrary()
+
+    # MuJoCo sim executors (physics simulation fallback)
+    if sim_module is not None:
+        sim_module.wire_executors(skill_library)
+        logger.info("Simulation executors wired into SkillLibrary")
+
+    # ROS 2 executors (real hardware — registers after sim, takes priority
+    # because SkillLibrary.register_executor overwrites previous registration)
+    if ros2_module is not None:
+        ros2_module.wire_executors(skill_library)
+        logger.info("ROS 2 executors wired into SkillLibrary")
+
+    # --- Install ModelRouter ---
+    if model_router is None:
+        # Create a default router that uses the (optionally sim-wired) SkillLibrary
+        from roboclaw.clients.model_router import ModelRouter
+
+        model_router = ModelRouter(skill_library=skill_library)
+    elif getattr(model_router, '_skill_library', None) is None:
+        # Router was pre-created without a SkillLibrary — attach ours
+        model_router._skill_library = skill_library
+
+    from roboclaw.orchestration.nodes import set_model_router
+    set_model_router(model_router)
+
+    # --- Install SensorFusion for perception pipeline ---
+    if sim_module is not None:
+        from roboclaw.perception.sensor_fusion import SensorFusion
+        from roboclaw.orchestration.nodes import set_sensor_fusion
+
+        sf = SensorFusion(env=sim_module.env)
+        set_sensor_fusion(sf)
+        logger.info("SensorFusion installed for perception pipeline (MuJoCo backend)")
+    else:
+        logger.info("No SimModule — perception will use stubs")
+
+    # --- Install LLM for TaskDecomposer ---
+    if llm is not None:
+        from roboclaw.orchestration.nodes import set_task_decomposer_llm
+        set_task_decomposer_llm(llm)
+        logger.info("LLM installed for TaskDecomposer planning")
+    else:
+        logger.info("No LLM — TaskDecomposer will use template-based planning")
 
     graph = build_agent_graph(checkpointer)
 

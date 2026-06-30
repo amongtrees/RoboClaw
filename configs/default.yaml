@@ -55,12 +55,14 @@ infrastructure:
       a2a_events: "roboclaw.a2a"
 
 llm:
-  provider: "anthropic"  # anthropic | openai
-  model: "claude-sonnet-4-6"
+  provider: "openai_compatible"  # anthropic | openai | openai_compatible
+  api_base: ""                    # OpenAI-compatible API endpoint (empty = use templates)
+  api_key: "${OPENAI_API_KEY}"    # API key or env var reference
+  model: "gpt-4o"
   temperature: 0.1
   max_tokens: 4096
   planning:
-    model: "claude-sonnet-4-6"
+    model: "gpt-4o"
     temperature: 0.1
     max_tokens: 8192
 
@@ -82,6 +84,27 @@ a2a:
   enabled: true
   discovery_interval_s: 30.0
   task_timeout_s: 300.0
+
+sim:
+  enabled: false
+  backend: "mujoco"
+  model_path: ""
+  render: false
+  headless: true
+  timestep: 0.002
+  control_decimation: 5
+  sensor_rate_hz: 100
+
+ros2:
+  enabled: false
+  node_name: "roboclaw_bridge"
+  joint_state_topic: "/joint_states"
+  imu_topic: "/imu/data"
+  joint_command_topic: "/joint_trajectory_controller/joint_trajectory"
+  left_ft_topic: "/left_wrist/ft"
+  right_ft_topic: "/right_wrist/ft"
+  walk_action: "/walk_to_pose"
+  grasp_action: "/whole_body_grasp"
 
 logging:
   level: "INFO"

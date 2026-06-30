@@ -155,13 +155,20 @@ class ModelRouter:
             result = await self._skill_library.execute_skill(
                 skill_type, parameters, world_state,
             )
+            is_success = result.status == ActionResultStatus.SUCCESS
             return ModelInferenceResponse(
                 request_id=f"fallback_{sub_task_id}",
-                status="success" if result.status == ActionResultStatus.SUCCESS else "failure",
+                status="success" if is_success else "failure",
                 confidence=0.5,
                 inference_time_ms=0.0,
-                metadata={"fallback": True, "simulated": True,
-                          "result": result.actual_outcome},
+                metadata={
+                    "fallback": True,
+                    "simulated": True,
+                    "result": result.actual_outcome,
+                    "action_status": "success" if is_success else "failure",
+                    "action_duration_sec": float(getattr(result, "duration_sec", 0)),
+                    "action_error": getattr(result, "error", None),
+                },
             )
 
         return ModelInferenceResponse(
@@ -173,6 +180,8 @@ class ModelRouter:
                 "fallback": True,
                 "simulated": True,
                 "note": "No skill library available — returning stub success",
+                "action_status": "success",
+                "action_duration_sec": 0.0,
             },
         )
 

@@ -9,6 +9,11 @@ import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+try:
+    from roboclaw.sim.config import SimConfig
+except ImportError:  # pragma: no cover
+    SimConfig = None
+
 
 class PostgresConfig(BaseModel):
     host: str = "localhost"
@@ -143,9 +148,12 @@ class RobotConfig(BaseModel):
     model: str = "h1_unitree"
     display_name: str = ""
     description: str = ""
+    urdf_path: str = ""
     embodiment: EmbodimentConfig = Field(default_factory=EmbodimentConfig)
     safety: SafetyBounds = Field(default_factory=SafetyBounds)
     skills: SkillDefaults = Field(default_factory=SkillDefaults)
+    sim: Any = Field(default_factory=dict)
+    ros2: Any = Field(default_factory=dict)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "RobotConfig":
@@ -153,13 +161,25 @@ class RobotConfig(BaseModel):
         with open(path) as f:
             raw = yaml.safe_load(f)
         robot_data = raw.get("robot", raw)
+
+        sim_config: Any = {}
+        if SimConfig is not None:
+            sim_raw = raw.get("sim", {})
+            if sim_raw:
+                sim_config = SimConfig(**sim_raw)
+
+        ros2_config: Any = raw.get("ros2", {}) or {}
+
         return cls(
             model=robot_data.get("model", ""),
             display_name=robot_data.get("display_name", ""),
             description=robot_data.get("description", ""),
+            urdf_path=robot_data.get("urdf_path", ""),
             embodiment=EmbodimentConfig(**raw.get("embodiment", {})),
             safety=SafetyBounds(**raw.get("safety", {})),
             skills=SkillDefaults(**raw.get("skills", {})),
+            sim=sim_config,
+            ros2=ros2_config,
         )
 
 

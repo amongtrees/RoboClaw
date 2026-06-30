@@ -42,6 +42,7 @@ class SafetyMonitor:
         self._running = False
         self._violations: list[SafetyViolation] = []
         self._estop_active = False
+        self._state_provider: Any = None
 
     async def start(self, state_provider: Any = None) -> None:
         """Start the safety monitor loop."""
@@ -60,17 +61,27 @@ class SafetyMonitor:
         self._running = False
         logger.info("Safety monitor stopped")
 
+    def set_state_provider(self, provider: Any) -> None:
+        """Set the state provider for live sensor data.
+
+        The provider must implement ``get_state() -> dict`` returning
+        a dict with keys ``joint_positions``, ``zmp``, ``left_arm_ft``,
+        ``right_arm_ft``, etc.
+        """
+        self._state_provider = provider
+
     async def _check_safety(self, state_provider: Any = None) -> None:
         """Run all safety checks."""
-        # In Phase 1, these are stub checks.
-        # In production, they read from WorkingMemory/ROS 2 topics.
+        # Prefer the instance-level state_provider (set via set_state_provider)
+        # over the parameter passed to start().
+        provider = self._state_provider or state_provider
 
         state = {}
-        if state_provider:
+        if provider:
             try:
-                state = await state_provider.get_state()
+                state = await provider.get_state()
             except Exception:
-                pass
+                logger.debug("State provider fetch failed", exc_info=True)
 
         # Check joint limits
         await self._check_joint_limits(state)
@@ -84,32 +95,68 @@ class SafetyMonitor:
     async def _check_joint_limits(self, state: dict[str, Any]) -> None:
         """Check joints against configured limits."""
         joint_states = state.get("joint_positions", {})
-        # Stub — in production, compares against robot_config.embodiment.joint_limits
+        if not joint_states:
+            return
+
+        # Load limits from config if available
+        config_limits: dict[str, dict[str, list[float]]] = {}
+        if self._config and hasattr(self._config, 'embodiment'):
+            config_limits = getattr(self._config.embodiment, 'joint_limits', {}) or {}
+
         for joint_name, position in joint_states.items():
-            if abs(position) > 3.0:  # Hard-coded sanity check
+            if not isinstance(position, (int, float)):
+                continue
+
+            # Try to find a matching limit
+            abs_limit = 3.0  # default sanity limit
+            for group_name, joints in config_limits.items():
+                if joint_name in joints or joint_name.replace("_act", "") in joints:
+                    limit_range = joints.get(joint_name, joints.get(joint_name.replace("_act", ""), None))
+                    if limit_range and isinstance(limit_range, (list, tuple)) and len(limit_range) == 2:
+                        abs_limit = max(abs(limit_range[0]), abs(limit_range[1]))
+                    break
+
+            if abs(position) > abs_limit:
                 self._add_violation(
                     "joint_limit",
                     SafetySeverity.CRITICAL,
-                    {"joint": joint_name, "position": position, "limit": 3.0},
+                    {"joint": joint_name, "position": position, "limit": abs_limit},
                 )
 
     async def _check_zmp(self, state: dict[str, Any]) -> None:
         """Check Zero Moment Point is within support polygon."""
         zmp = state.get("zmp", (0.0, 0.0))
-        # Stub — in production, checks against polygon from robot_config.safety.zmp_support_polygon
-        support_polygon = [
+        if not isinstance(zmp, (tuple, list)) or len(zmp) < 2:
+            return
+
+        # Use config polygon if available, else default
+        zmp_polygon: list[tuple[float, float]] = [
             (-0.10, -0.05), (-0.10, 0.05), (0.05, 0.05), (0.05, -0.05),
         ]
-        if not self._point_in_polygon(zmp, support_polygon):
+        if self._config and hasattr(self._config, 'safety'):
+            poly_raw = getattr(self._config.safety, 'zmp_support_polygon', None)
+            if poly_raw:
+                try:
+                    zmp_polygon = [(float(p[0]), float(p[1])) for p in poly_raw]
+                except (TypeError, IndexError, ValueError):
+                    pass
+
+        if not self._point_in_polygon((float(zmp[0]), float(zmp[1])), zmp_polygon):
             self._add_violation(
                 "zmp_violation",
                 SafetySeverity.CRITICAL,
-                {"zmp": zmp, "polygon": support_polygon},
+                {"zmp": zmp, "polygon": zmp_polygon},
             )
 
     async def _check_forces(self, state: dict[str, Any]) -> None:
         """Check force/torque against limits."""
-        force_limit = 50.0  # from config
+        # Use config force threshold if available
+        force_limit = 50.0
+        if self._config and hasattr(self._config, 'safety'):
+            force_limit = float(
+                getattr(self._config.safety, 'collision_force_threshold_n', 50.0) or 50.0
+            )
+
         for sensor in ["left_arm_ft", "right_arm_ft"]:
             ft = state.get(sensor, {})
             force = ft.get("force_xyz", (0.0, 0.0, 0.0))

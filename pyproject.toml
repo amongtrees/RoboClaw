@@ -72,6 +72,8 @@ ros2 = [
     "geometry-msgs",
     "sensor-msgs",
     "tf2-ros",
+    "trajectory-msgs",
+    "std-msgs",
 ]
 sim = [
     "mujoco>=3.0.0",

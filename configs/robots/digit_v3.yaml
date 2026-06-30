@@ -41,6 +41,10 @@ safety:
   collision_force_threshold_n: 40.0
   estop_deceleration: 1.8
 
+sim:
+  enabled: false
+  model_path: "models/digit_v3/scene.xml"
+
 skills:
   default_grasp_strategy: "parallel_jaw_pinch"
   walk_max_speed_ms: 1.2

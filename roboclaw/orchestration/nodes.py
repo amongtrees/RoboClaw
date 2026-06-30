@@ -19,12 +19,24 @@ logger = logging.getLogger(__name__)
 async def perceive_node(state: AgentGraphState) -> dict[str, Any]:
     """Ingest sensor data and produce a unified perception snapshot.
 
-    In production, this delegates to roboclaw.perception.SensorFusion.
-    For Phase 1, it simulates perception from working memory.
+    When a ``SensorFusion`` singleton is available (simulation or hardware
+    mode), delegates to it for real multi-modal sensor fusion.  Falls back
+    to stub perception data otherwise.
     """
     logger.debug(f"[{state.robot_id}] PERCEIVE phase — loop {state.loop_count}")
 
-    # Simulated perception — in production this calls PerceptionFusion.process()
+    sf = _get_sensor_fusion()
+
+    if sf is not None:
+        try:
+            result = await sf.fuse(state)
+            result["phase"] = AgentPhase.PERCEIVING
+            result["loop_count"] = state.loop_count + 1
+            return result
+        except Exception:
+            logger.exception("SensorFusion.fuse() failed, falling back to stub")
+
+    # Fallback stub — no simulation or SensorFusion not configured
     perception = PerceptionData(
         timestamp=time(),
         detected_objects=state.world_objects,
@@ -47,7 +59,25 @@ async def reflect_node(state: AgentGraphState) -> dict[str, Any]:
     # Compose a state summary from perception
     perception = state.perception
     objects_seen = len(perception.detected_objects) if perception else 0
-    summary = f"Objects detected: {objects_seen}. Phase: {state.phase}."
+
+    # Build richer summary when sensor data is available
+    summary_parts = [f"Objects: {objects_seen}"]
+    com = state.com_position
+    zmp = state.zmp_position
+    contacts = state.contact_forces
+    if com and len(com) >= 3:
+        summary_parts.append(f"COM: [{com[0]:.2f}, {com[1]:.2f}, {com[2]:.2f}]")
+    if zmp and len(zmp) >= 2:
+        summary_parts.append(f"ZMP: [{zmp[0]:.3f}, {zmp[1]:.3f}]")
+    if contacts:
+        summary_parts.append(f"Contacts: {len(contacts)}")
+    summary_parts.append(f"Phase: {state.phase}")
+
+    summary = " | ".join(summary_parts)
+
+    # Replace the simple summary with the rich one when sensor data exists
+    if not (com or zmp or contacts):
+        summary = f"Objects detected: {objects_seen}. Phase: {state.phase}."
 
     # Check safety (in production, calls SafetyMonitor)
     safety_ok = state.safety_status.get("estop", False) is False
@@ -78,7 +108,8 @@ async def plan_node(state: AgentGraphState) -> dict[str, Any]:
         from roboclaw.planning.task_decomposer import TaskDecomposer
         from roboclaw.planning.plan_validator import PlanValidator
 
-        decomposer = TaskDecomposer(validator=PlanValidator())
+        llm = _get_task_decomposer_llm()
+        decomposer = TaskDecomposer(llm=llm, validator=PlanValidator())
         plan, routing_map = await decomposer.plan(task_spec, {}, None)
         return {
             "execution_plan": plan.model_dump(),
@@ -190,15 +221,49 @@ async def act_node(state: AgentGraphState) -> dict[str, Any]:
                     },
                     robot_state={
                         "robot_id": state.robot_id,
-                        "joint_positions": {},
+                        "joint_positions": state.joint_positions or {},
+                        "joint_velocities": state.joint_velocities or {},
+                        "imu_data": state.imu_data or {},
+                        "com_position": state.com_position or [],
+                        "zmp_position": state.zmp_position or [],
+                        "body_poses": state.body_poses or {},
                     },
                 )
                 model_results = dict(state.model_inference_results)
                 model_results[sub_task_id] = inference.model_dump()
 
+                # Extract actual execution result from fallback path
+                action_result = None
+                meta = inference.metadata or {}
+                if meta.get("result"):
+                    action_result = dict(meta["result"])
+                    action_result["status"] = meta.get(
+                        "action_status",
+                        "success" if inference.is_success else "failure",
+                    )
+                    action_result["duration_sec"] = meta.get("action_duration_sec", 0)
+                    if meta.get("action_error"):
+                        action_result["error"] = meta["action_error"]
+                elif inference.is_success and router._skill_library is not None:
+                    # Model succeeded — still need to drive physics
+                    from roboclaw.action.base import ActionResultStatus
+                    phys_result = await router._skill_library.execute_skill(
+                        skill_type,
+                        next_subtask.get("parameters", {}),
+                        world_state={
+                            "robot_pose": state.robot_pose,
+                            "world_objects": state.world_objects,
+                            "safety_status": state.safety_status,
+                            "task_goal": plan.get("task_goal", ""),
+                        },
+                        model_result=None,  # force executor path for physics
+                    )
+                    action_result = phys_result.model_dump()
+
                 return {
                     "current_subtask": next_subtask,
                     "model_inference_results": model_results,
+                    "last_action_result": action_result,
                     "phase": AgentPhase.ACTING,
                 }
         except Exception as exc:
@@ -238,6 +303,50 @@ def set_model_router(router: Any) -> None:
     logger.info("ModelRouter installed in orchestration nodes")
 
 
+# --- Internal: thread-safe SensorFusion singleton access ---
+
+_sensor_fusion: Any = None
+
+
+def _get_sensor_fusion() -> Any:
+    """Return the module-level SensorFusion singleton (set at app startup)."""
+    return _sensor_fusion
+
+
+def set_sensor_fusion(sf: Any) -> None:
+    """Set the module-level SensorFusion singleton.
+
+    Called from ``create_agent_runner`` so that ``perceive_node`` can
+    access real sensor data from MuJoCo (or future sensor backends).
+    When not set, ``perceive_node`` falls back to stub perception data.
+    """
+    global _sensor_fusion
+    _sensor_fusion = sf
+    logger.info("SensorFusion installed in orchestration nodes")
+
+
+# --- Internal: thread-safe TaskDecomposer LLM singleton access ---
+
+_task_decomposer_llm: Any = None
+
+
+def _get_task_decomposer_llm() -> Any:
+    """Return the module-level LLM client for TaskDecomposer."""
+    return _task_decomposer_llm
+
+
+def set_task_decomposer_llm(llm: Any) -> None:
+    """Set the module-level LLM client singleton for planning.
+
+    Called from ``create_agent_runner`` or application bootstrap so
+    that ``plan_node`` can pass a real LLM to ``TaskDecomposer``.
+    When not set, ``TaskDecomposer`` falls back to template planning.
+    """
+    global _task_decomposer_llm
+    _task_decomposer_llm = llm
+    logger.info("TaskDecomposer LLM installed in orchestration nodes")
+
+
 async def feedback_node(state: AgentGraphState) -> dict[str, Any]:
     """Evaluate sub-task outcome, detect failures, update episode.
 
@@ -246,6 +355,7 @@ async def feedback_node(state: AgentGraphState) -> dict[str, Any]:
     logger.debug(f"[{state.robot_id}] FEEDBACK phase")
 
     current = state.current_subtask
+    action_result = state.last_action_result
 
     # If no current sub-task and no error, plan is complete
     if current is None and state.error is None:
@@ -255,15 +365,49 @@ async def feedback_node(state: AgentGraphState) -> dict[str, Any]:
             "should_continue": False,
         }
 
-    # Simulate execution outcome (in production: compare actual vs expected)
     if current:
         sub_task_id = current.get("sub_task_id", "")
-        # Mark as completed for the demo flow
+
+        # Check actual execution outcome
+        if action_result:
+            status = action_result.get("status", "success")
+            if status == "failure":
+                error_detail = action_result.get("error", {})
+                logger.warning(
+                    f"[{state.robot_id}] Sub-task {sub_task_id} FAILED: {error_detail}"
+                )
+                return {
+                    "phase": AgentPhase.EVALUATING,
+                    "error": {
+                        "type": "execution_failure",
+                        "detail": f"Sub-task '{sub_task_id}' failed: {error_detail}",
+                        "action_result": action_result,
+                    },
+                }
+
+            # Success — mark as completed
+            completed = list(state.completed_subtask_ids) + [sub_task_id]
+            duration = action_result.get("duration_sec", 0)
+            logger.info(
+                f"[{state.robot_id}] Sub-task {sub_task_id} completed "
+                f"({duration:.2f}s)"
+            )
+            return {
+                "completed_subtask_ids": completed,
+                "current_subtask": None,
+                "last_action_result": None,
+                "phase": AgentPhase.EVALUATING,
+            }
+
+        # No action result — simulated path (no executors wired)
         completed = list(state.completed_subtask_ids) + [sub_task_id]
-        logger.info(f"[{state.robot_id}] Sub-task {sub_task_id} completed successfully")
+        logger.info(
+            f"[{state.robot_id}] Sub-task {sub_task_id} completed (simulated)"
+        )
         return {
             "completed_subtask_ids": completed,
             "current_subtask": None,
+            "last_action_result": None,
             "phase": AgentPhase.EVALUATING,
         }
 

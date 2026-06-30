@@ -50,6 +50,17 @@ class AgentGraphState(BaseModel):
     world_objects: list[dict[str, Any]] = Field(default_factory=list)
     safety_status: dict[str, Any] = Field(default_factory=dict)
 
+    # Raw sensor / proprioceptive state (populated by SensorFusion when
+    # simulation or hardware is available; empty otherwise)
+    joint_positions: dict[str, float] = Field(default_factory=dict)
+    joint_velocities: dict[str, float] = Field(default_factory=dict)
+    imu_data: dict[str, Any] = Field(default_factory=dict)
+    body_poses: dict[str, Any] = Field(default_factory=dict)
+    contact_forces: list[dict[str, Any]] = Field(default_factory=list)
+    com_position: list[float] = Field(default_factory=list)
+    zmp_position: list[float] = Field(default_factory=list)
+    proprioceptive_state: dict[str, Any] = Field(default_factory=dict)
+
     # Memory pointers
     episode_id: str | None = None
     relevant_memories: list[dict[str, Any]] = Field(default_factory=list)
@@ -66,6 +77,9 @@ class AgentGraphState(BaseModel):
     should_continue: bool = True
     should_delegate: bool = False
     require_human_help: bool = False
+
+    # Action execution result (populated by act_node after skill execution)
+    last_action_result: dict[str, Any] | None = None
 
     # A2A (for multi-agent scenarios)
     peer_agents: list[dict[str, Any]] = Field(default_factory=list)

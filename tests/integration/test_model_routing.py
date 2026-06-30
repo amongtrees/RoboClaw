@@ -38,8 +38,14 @@ def mock_model_router():
         waypoints=[{"x": 1.0, "y": 0.0, "z": 0.0}],
         confidence=0.90,
         inference_time_ms=100.0,
-        model_dump=MagicMock(return_value={"status": "success", "waypoints": [{"x": 1.0}]}),
+        metadata={},
+        model_dump=MagicMock(return_value={
+            "status": "success",
+            "waypoints": [{"x": 1.0}],
+            "metadata": {},
+        }),
     ))
+    mock._skill_library = None
     mock.registered_model_types = ["vln", "vla"]
     mock.close = AsyncMock()
     return mock

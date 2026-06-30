@@ -44,7 +44,7 @@ def _route_grasp(state: AgentGraphState) -> str:
     return "complete"
 
 
-def build_grasp_subgraph() -> StateGraph:
+def build_grasp_subgraph() -> Any:
     """Build a reusable sub-graph for whole-body grasp sequence."""
     graph = StateGraph(AgentGraphState)
 
@@ -84,7 +84,7 @@ async def _walk_check_balance(state: AgentGraphState) -> dict[str, Any]:
     return {"phase": "walk_balance_check"}
 
 
-def build_walk_subgraph() -> StateGraph:
+def build_walk_subgraph() -> Any:
     """Build a reusable sub-graph for bipedal walking sequence."""
     graph = StateGraph(AgentGraphState)
 
